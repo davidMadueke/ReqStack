@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ReqStack</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;1,9..144,300&display=swap" rel="stylesheet" />
+    <link href="styles.css" rel="stylesheet" />
+</head>
+<body>
+<header>
+  <div class="logo">Req<span>Stack</span></div>
+  <div class="header-project" id="header-project">No project selected</div>
+</header>
+
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside>
+    <div class="sidebar-head">
+      Projects
+      <button title="Add project" onclick="openAddProject()">+</button>
+    </div>
+    <div class="project-list" id="project-list"></div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main id="main-area">
+    <div class="no-select-msg">
+      <div class="big">← Select a project</div>
+      <div>or add a new one to get started</div>
+    </div>
+  </main>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<!-- IMPORT MODAL -->
+<div class="modal-overlay" id="import-modal-overlay">
+  <div class="modal" style="width:500px;">
+    <h2>Import REQUIREMENTS.md</h2>
+    <p id="import-desc">Parsing file…</p>
+    <div class="import-preview" id="import-preview"></div>
+    <div id="import-conflict" style="display:none;">
+      <p style="color:var(--accent);font-size:12px;margin-top:4px;">This project already has requirements. Choose how to proceed:</p>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn" id="btn-replace" onclick="confirmImport('replace')">Replace all</button>
+        <button class="btn" id="btn-merge" onclick="confirmImport('merge')">Merge (skip duplicates)</button>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeImportModal()">Cancel</button>
+      <button class="btn btn-accent" id="btn-import-confirm" onclick="confirmImport('replace')" style="display:none;">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD PROJECT MODAL -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h2>Add project</h2>
+    <p>Give this project a name (usually the repo name). The export button will write <code>REQUIREMENTS.md</code> directly into the folder you choose via your file system.</p>
+    <div>
+      <div class="form-label" style="margin-bottom:6px;">Project name</div>
+      <input type="text" id="modal-name" placeholder="e.g. my-robot-project" style="width:100%;" />
+    </div>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="confirmAddProject()">Add project</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
