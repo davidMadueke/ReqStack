@@ -11,9 +11,15 @@ import { confirmAddProject } from "./projects.js";
 
 let projects = [];
 // projects: [{ id, name, reqs: [], categories: [], req_type: {sys,sub,der} }]
+
 let activeProjectId  = null;
 let activeCategoryId = null;
 let activeFilter     = 'all';
+
+// In-memory cache of current project data — loaded on project select
+let currentProject  = null;
+let currentReqs     = [];
+let currentCats     = [];
 
 // ── INIT ──
 // Entry point — called once on page load
@@ -22,30 +28,28 @@ async function init() {
     await verifyDB();
 
     projects = await getProjects();
+    console.log(projects.length)
 
-    // TODO:  initEventListeners();
-    const addProjectButton = document.getElementById('btn-add-project');
-    if (addProjectButton) addProjectButton.addEventListener('click', renderAddProject);
+    initEventListeners();
 
-    handleConfirmAddProject();  
-  
     renderSidebar();
     //renderMain();
 }
 
 async function renderSidebar() {
   const list = document.getElementById('project-list');
+  projects = await getProjects();
+
   if (projects.length === 0) {
     list.innerHTML = /*html*/`<div class="no-projects">No projects yet.<br/>Click + to add one.</div>`;
     return;
   }
   list.innerHTML = projects.map(p => {
     const active = p.id === activeProjectId ? 'active' : '';
-    return /*html*/`<div class='project-item ${active}' onclick="handleSelectProject('${p.id}')">
+    return /*html*/`<div class='project-item ${active}' data-action="select-project" data-id='${p.id}'>
       <div class="project-dot"></div>
       <div class="project-name" title="${esc(p.name)}">${esc(p.name)}</div>
-      <div class="project-count">${p.reqs.length}</div>
-      <button class="project-del" title="Delete project" onclick="handleDeleteProject('${p.id}', event)">×</button>
+      <button class="project-del" title="Delete project" data-action="delete-project" data-id='${p.id}'>×</button>
     </div>`;
   }).join('');
 }
@@ -105,12 +109,12 @@ async function renderMain() {
 //async function renderCategoryTree() { ... }
 
 async function renderRequirements() { 
-    const proj = handleActiveProject();
+  const proj = handleActiveProject();
   if (!proj) return;
 
   // Stats
   const cnt = { sys: 0, sub: 0, der: 0 };
-  proj.reqs.forEach(r => cnt[r.level]++);
+  currentReqs.forEach(r => cnt[r.level]++);
   const statsBar = document.getElementById('stats-bar');
   if (statsBar) {
     statsBar.innerHTML = html`
@@ -153,14 +157,27 @@ async function renderRequirements() {
   }).join('');
  }
 
-function renderAddProject() {
+/* function renderAddProject() {
     document.getElementById('modal-name').value = '';
     document.getElementById('modal-overlay').classList.add('open');
-    setTimeout(() => document.getElementById('modal-name').focus(), 50);
-}
+    setTimeout(() => document.getElementById('modal-name').focus(), 50); // Timer to set when the keyboard shortcuts for modal kick in
+} */
 
 // ── EVENT HANDLERS ──
-async function handleConfirmAddProject() {
+async function handleAddProject() {
+  const nameEl = document.getElementById('modal-name');
+  const name   = nameEl.value.trim();
+  if (!name) return;
+
+  const id      = 'proj_' + Date.now();
+  const project = { id, name, counters: { sys: 0, sub: 0, der: 0 } };
+
+  await saveProject(project);
+  closeModal('modal-overlay');
+  await handleSelectProject(id);
+}
+
+/* async function handleConfirmAddProject() {
     const addProjectOverlay = document.getElementById('modal-overlay')
     if (addProjectOverlay){
       addProjectOverlay.addEventListener('click', e => {
@@ -192,33 +209,55 @@ async function handleConfirmAddProject() {
         if (e.key === 'Escape') closeModal();
     });
 
- }
+ } */
 
 async function handleDeleteProject(id, e){
     e.stopPropagation();
-    const p = getProject(id);
+    const projects = await getProjects();
+    const p        = projects.find(p => p.id === id);
+    if(!p) return;
+
     if (!confirm(`Delete project "${p.name}" and all its requirements?`)) return;
-    deleteProject(p.id)
+
+    // Delete all reqs and categories related to this project
+    const reqs = await getRequirements(id);
+    const cats = await getCategories(id);
+    reqs.forEach(r => { deleteRequirement(r.id);})
+    cats.forEach(c => { deleteRequirement(c.id);})
+    await deleteProject(p.id)
+    
     if (activeProjectId === id) {
         activeProjectId = null;
+        currentProject  = null;
+        currentReqs     = [];
+        currentCats     = [];
         renderSidebar();
         renderMain();
     } else {
         renderSidebar();
     }
+    projects    = await getProjects(); // Refresh the 
 }
 
 async function handleSelectProject(id) {
-  activeProjectId = id;
-  activeFilter = 'all';
+  activeProjectId  = id;
+  activeCategoryId = null;
+  activeFilter     = 'all';
+
+  projects    = await getProjects();
+  currentProject   = projects.find(p => p.id === id) || null;
+  currentReqs      = currentProject ? await getRequirements(id) : [];
+  currentCats      = currentProject ? await getCategories(id)   : [];
+
   renderSidebar();
   renderMain();
 }
 
 function handleActiveProject() {
-  return getActiveProject(activeProjectId);
+  return getProject(activeProjectId);
 }
-function getActiveProject(id){
+
+function getProject(id){
   return projects.find(p => p.id === id);
 }
 
@@ -263,7 +302,49 @@ function handleDeleteRequirement(id, e) {
 // function handleExport() { ... }
 // function handleImport() { ... }
 
-// TODO: function initEventListeners(){}
+function initEventListeners(){
+  // Project sidebar
+  document.getElementById('btn-add-project').addEventListener('click', e => {
+
+    document.getElementById('modal-name').value = '';
+    document.getElementById('modal-overlay').classList.add('open');
+    setTimeout(() => document.getElementById('modal-name').focus(), 50); // Timer to set when the keyboard shortcuts for modal kick in
+  });
+  document.getElementById('project-list').addEventListener('click', e => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    const { action, id } = el.dataset;
+    if (action === 'select-project') {handleSelectProject(id);}
+    if (action === 'delete-project') handleDeleteProject(id, e);
+  });
+
+
+  // Import Modal overlay
+  document.getElementById('btn-add-project-cancel').addEventListener('click', e => {closeModal();});
+  document.getElementById('btn-add-project-confirm').addEventListener('click', e => {handleAddProject();});
+  
+  // Add Project Modal Overlay
+
+
+  // Modal overlays — close on backdrop click
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal('modal-overlay');
+  });
+
+  document.getElementById('import-modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal('import-modal-overlay');
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      closeModal('modal-overlay');
+      closeModal('import-modal-overlay');
+    }
+    if (e.key === 'Enter' && document.getElementById('modal-overlay').classList.contains('open')) {
+      handleAddProject();
+    }});
+}
 
 
 // ── UTILS ──

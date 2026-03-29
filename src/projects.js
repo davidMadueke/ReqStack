@@ -5,5 +5,5 @@ export const confirmAddProject = async () => {
   if (!name) return;
   const id = 'proj_' + Date.now();
   saveProject({ id, name, reqs: [], counters: { sys: 0, sub: 0, der: 0 } });
-  return id; 
+  return id 
 }
