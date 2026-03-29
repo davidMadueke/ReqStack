@@ -19,7 +19,7 @@
   <aside>
     <div class="sidebar-head">
       Projects
-      <button title="Add project" onclick="openAddProject()">+</button>
+      <button title="Add project" id="btn-add-project">+</button>
     </div>
     <div class="project-list" id="project-list"></div>
   </aside>
@@ -45,8 +45,8 @@
     <div id="import-conflict" style="display:none;">
       <p style="color:var(--accent);font-size:12px;margin-top:4px;">This project already has requirements. Choose how to proceed:</p>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn" id="btn-replace" onclick="confirmImport('replace')">Replace all</button>
-        <button class="btn" id="btn-merge" onclick="confirmImport('merge')">Merge (skip duplicates)</button>
+        <button class="btn" id="btn-import-replace-all" onclick="confirmImport('replace')">Replace all</button>
+        <button class="btn" id="btn-import-merge" onclick="confirmImport('merge')">Merge (skip duplicates)</button>
       </div>
     </div>
     <div class="modal-btns">
@@ -66,8 +66,8 @@
       <input type="text" id="modal-name" placeholder="e.g. my-robot-project" style="width:100%;" />
     </div>
     <div class="modal-btns">
-      <button class="btn" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-accent" onclick="confirmAddProject()">Add project</button>
+      <button class="btn" id="btn-add-project-cancel">Cancel</button>
+      <button class="btn btn-accent" id="btn-add-project">Add project</button>
     </div>
   </div>
 </div>
