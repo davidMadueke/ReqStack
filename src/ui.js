@@ -1,8 +1,9 @@
 import { initDB, verifyDB, getProjects, saveProject, deleteProject, 
          getRequirements, saveRequirement, deleteRequirement,
-         getCategories, saveCategory, deleteCategory } from "./db.js"
+         getCategories, saveCategory, deleteCategory, 
+         migrateDB} from "./db.js"
 
-import { nextId } from "./requirements.js";
+import { generateId, LEVELS, validateParent, getDescendantReqIds } from "./requirements.js";
 
 import { confirmAddProject } from "./projects.js";
 
@@ -23,17 +24,25 @@ let currentCats     = [];
 
 // ── INIT ──
 // Entry point — called once on page load
-async function init() { 
-    await initDB();
-    await verifyDB();
-
-    projects = await getProjects();
-    console.log(projects.length)
-
-    initEventListeners();
-
-    renderSidebar();
-    //renderMain();
+async function init() {
+    try {
+        await initDB();
+        await migrateDB();
+        await verifyDB();
+        projects = await getProjects();
+        for (const project in projects){
+          let i = project.id;
+          let req = await getRequirements(i);
+          console.log(req);
+        }
+        await initEventListeners();
+        await renderSidebar();
+        renderMain(); // renders the "no project selected" state
+      
+      } catch (err) {
+        console.error('[UI] Init failed:', err);
+        showToast('Failed to initialise database. See console for details.', 'error');
+      }
 }
 
 async function renderSidebar() {
@@ -70,43 +79,52 @@ async function renderMain() {
     document.getElementById('header-project').innerHTML = /*html*/`Project: <strong>${esc(proj.name)}</strong>`;
 
   area.innerHTML = /*html*/`
-    <div class="add-form" id="add-form">
-      <div class="form-row">
-        <span class="form-label">Level</span>
-        <select id="inp-level">
-          <option value="sys">System</option>
-          <option value="sub">Subsystem</option>
-          <option value="der">Derived</option>
-        </select>
-        <span class="form-label" style="margin-left:8px;">Parent ID</span>
-        <input type="text" id="inp-parent" placeholder="e.g. SYS-001" style="width:120px;" />
-        <button class="btn btn-accent" onclick="handleAddRequirement()" style="margin-left:auto;">+ Add requirement</button>
-        <button class="btn btn-import" onclick="handleImport()">↑ Import REQUIREMENTS.md</button>
-        <button class="btn btn-export" onclick="handleExport()">↓ Export REQUIREMENTS.md</button>
+    <div class="workspace">
+      <div class="category-panel" id="category-panel"></div>
+      <div class="req-area">
+        <div class="add-form" id="add-form">
+          <div class="form-row">
+            <span class="form-label">Level</span>
+            <select id="inp-level">
+              <option value="sys">System</option>
+              <option value="sub">Subsystem</option>
+              <option value="der">Derived</option>
+            </select>
+            <span class="form-label">Parent ID</span>
+            <input type="text" id="inp-parent" placeholder="e.g. SYS-001" style="width:110px;" />
+            <span class="form-label">Category</span>
+            <select id="inp-category">
+              <option value=null>— none —</option>
+            </select>
+            <button class="btn btn-accent" workspace-action="add-requirement"
+              style="margin-left:auto;">+ Add requirement</button>
+            <button class="btn btn-import" workspace-action="import">
+              ↑ Import REQUIREMENTS.md</button>
+            <button class="btn btn-export" workspace-action="export">
+              ↓ Export REQUIREMENTS.md</button>
+          </div>
+          <textarea id="inp-text" rows="2"
+            placeholder="The system shall/may… (Ctrl+Enter to submit)"></textarea>
+        </div>
+
+        <div class="filter-bar" id="filter-bar">
+          <span class="filter-label">Show</span>
+          <button class="filter-chip active" data-filter="all" >All</button>
+          <button class="filter-chip f-sys"  data-filter="sys">System</button>
+          <button class="filter-chip f-sub"  data-filter="sub">Subsystem</button>
+          <button class="filter-chip f-der"  data-filter="der">Derived</button>
+          <div class="stats" id="stats-bar"></div>
+        </div>
+
+        <div class="req-list" id="req-list"></div>
       </div>
-      <textarea id="inp-text" placeholder="The system shall… (use 'shall' language for verifiable requirements)" rows="2"></textarea>
     </div>
-
-    <div class="filter-bar">
-      <span class="filter-label">Show</span>
-      <button class="filter-chip active" onclick="setFilter('all',this)">All</button>
-      <button class="filter-chip f-sys" onclick="setFilter('sys',this)">System</button>
-      <button class="filter-chip f-sub" onclick="setFilter('sub',this)">Subsystem</button>
-      <button class="filter-chip f-der" onclick="setFilter('der',this)">Derived</button>
-      <div class="stats" id="stats-bar"></div>
-    </div>
-
-    <div class="req-list" id="req-list"></div>
   `;
 
-  document.getElementById('inp-text').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddRequirement();
-  });
 
   renderRequirements();
 }
 
-//async function renderCategoryTree() { ... }
 
 async function renderRequirements() { 
   const proj = handleActiveProject();
@@ -117,7 +135,7 @@ async function renderRequirements() {
   currentReqs.forEach(r => cnt[r.level]++);
   const statsBar = document.getElementById('stats-bar');
   if (statsBar) {
-    statsBar.innerHTML = html`
+    statsBar.innerHTML = /*html*/`  
       <div class="stat-pill s-sys"><span>${cnt.sys}</span> sys</div>
       <div class="stat-pill s-sub"><span>${cnt.sub}</span> sub</div>
       <div class="stat-pill s-der"><span>${cnt.der}</span> der</div>
@@ -127,23 +145,23 @@ async function renderRequirements() {
   const list = document.getElementById('req-list');
   if (!list) return;
 
-  const visible = activeFilter === 'all' ? proj.reqs : proj.reqs.filter(r => r.level === activeFilter);
+  const visible = activeFilter === 'all' ? currentReqs : currentReqs.filter(r => r.level === activeFilter);
 
   if (visible.length === 0) {
-    list.innerHTML = `<div class="empty-state">
+    list.innerHTML =/*html*/ `<div class="empty-state">
       <div class="empty-icon">∅</div>
-      <div>${proj.reqs.length === 0 ? 'No requirements yet.' : 'No requirements at this level.'}</div>
-      ${proj.reqs.length === 0 ? '<div style="color:var(--text3);font-size:12px;">Add your first requirement above using "shall" language.</div>' : ''}
+      <div>${currentReqs.length === 0 ? 'No requirements yet.' : 'No requirements at this level.'}</div>
+      ${currentReqs.length === 0 ? '<div style="color:var(--text3);font-size:12px;">Add your first requirement above using "shall" language.</div>' : ''}
     </div>`;
     return;
   }
 
   const indentMap = { sys: 0, sub: 1, der: 2 };
-
+ 
   list.innerHTML = visible.map(r => {
     const lm = LEVELS[r.level];
     const indent = indentMap[r.level];
-    return html`<div class="req-card level-${r.level} ${indent > 0 ? 'indent-'+indent : ''}">
+    return /*html*/`<div id="requirements-card" class="req-card level-${r.level} ${indent > 0 ? 'indent-'+indent : ''}">
       <div class="req-id">${r.id}</div>
       <div class="req-body">
         <div class="req-text">${esc(r.text)}</div>
@@ -152,17 +170,17 @@ async function renderRequirements() {
           ${r.parent ? `<span class="req-parent">↑ ${r.parent}</span>` : ''}
         </div>
       </div>
-      <button class="req-del" title="Delete" onclick="handleDeleteRequirement('${r.id}', event)">×</button>
+      <button class="req-del" title="Delete" del-req-id='${r.id}'>×</button>
     </div>`;
   }).join('');
+
+
+
  }
 
-/* function renderAddProject() {
-    document.getElementById('modal-name').value = '';
-    document.getElementById('modal-overlay').classList.add('open');
-    setTimeout(() => document.getElementById('modal-name').focus(), 50); // Timer to set when the keyboard shortcuts for modal kick in
-} */
-
+ function renderCategoryPanel(){
+  return
+ }
 // ── EVENT HANDLERS ──
 async function handleAddProject() {
   const nameEl = document.getElementById('modal-name');
@@ -176,40 +194,6 @@ async function handleAddProject() {
   closeModal('modal-overlay');
   await handleSelectProject(id);
 }
-
-/* async function handleConfirmAddProject() {
-    const addProjectOverlay = document.getElementById('modal-overlay')
-    if (addProjectOverlay){
-      addProjectOverlay.addEventListener('click', e => {
-          if (e.target === e.currentTarget) closeModal();
-      });
-    }
-    const cancelAddProject = document.getElementById('btn-add-project-cancel')
-    if (cancelAddProject){
-      cancelAddProject.addEventListener('click', e => {closeModal();});
-    }
-    
-    const addProjectButton = document.getElementById('btn-add-project')
-    if (addProjectButton){
-      addProjectButton.addEventListener('click', e => {
-        const newId = confirmAddProject();
-        closeModal();
-        renderSidebar();
-        handleSelectProject(newId);
-      });
-    }
-
-    document.getElementById('modal-name').addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-            const newId = confirmAddProject();
-            closeModal();
-            renderSidebar();
-            handleSelectProject(newId);
-        }
-        if (e.key === 'Escape') closeModal();
-    });
-
- } */
 
 async function handleDeleteProject(id, e){
     e.stopPropagation();
@@ -262,47 +246,69 @@ function getProject(id){
 }
 
 
-async function handleAddRequirement() { 
-    const proj = handleActiveProject();
-    if (!proj) return;
-    const level = document.getElementById('inp-level').value;
-    const parent = document.getElementById('inp-parent').value.trim().toUpperCase();
-    const text = document.getElementById('inp-text').value.trim();
-    if (!text) { showToast('Enter a requirement statement.', 'error'); return; }
-    if (parent && !proj.reqs.find(r => r.id === parent)) {
-        showToast(`Parent ID "${parent}" not found.`, 'error'); return;
-    }
-    const id = nextId(proj, level);
-    proj.reqs.push({ id, level, parent: parent || null, text });
-    saveProject();
-    document.getElementById('inp-text').value = '';
-    document.getElementById('inp-parent').value = '';
-    renderRequirements();
-    renderSidebar();
+async function handleAddRequirement() {
+  if (!currentProject) return;
+
+  const level    = document.getElementById('inp-level').value;
+  const parentRaw = document.getElementById('inp-parent').value.trim().toUpperCase();
+  const catId    = document.getElementById('inp-category').value || null;
+  const text     = document.getElementById('inp-text').value.trim();
+
+  if (!text) { showToast('Enter a requirement statement.', 'error'); return; }
+
+  if (parentRaw && !validateParent(currentReqs, parentRaw)) {
+    showToast(`Parent ID "${parentRaw}" not found.`, 'error'); return;
+  }
+
+  const id = generateId(currentProject.counters, level);
+  await saveProject(currentProject); // save updated counters
+
+  const req = {
+    id,
+    level,
+    parent:     parentRaw || null,
+    categoryId: catId || 0,
+    text,
+    projectId:  currentProject.id,
+  };
+
+  await saveRequirement(req);
+  currentReqs.push(req);
+
+  document.getElementById('inp-text').value   = '';
+  document.getElementById('inp-parent').value = '';
+
+  //renderCategoryPanel();
+  renderRequirements();
+  await renderSidebar();
 }
 
-function handleDeleteRequirement(id, e) {
+async function handleDeleteRequirement(id, e) {
   e.stopPropagation();
-  const proj = handleActiveProject();
-  if (!proj) return;
-  const hasChildren = proj.reqs.some(r => r.parent === id);
-  if (hasChildren && !confirm('This requirement has children. Delete it and its children?')) return;
-  // Remove children recursively
-  function removeChildren(pid) {
-    const children = proj.reqs.filter(r => r.parent === pid).map(r => r.id);
-    children.forEach(cid => { removeChildren(cid); deleteRequirement(cid); });
-  }
-  removeChildren(id);
-  deleteRequirement(id)
+  if (!currentProject) return;
+  const descendantIds = getDescendantReqIds(id, currentReqs);
+  const toDelete      = [id, ...descendantIds];
+
+  if (descendantIds.size > 0 &&
+      !confirm(`This requirement has ${descendantIds.size} child(ren). Delete all?`)) return;
+
+  currentReqs = currentReqs.filter(r => !toDelete.includes(r.id));  
+  for (const rid of toDelete) await deleteRequirement(rid);
+
+  renderCategoryPanel();
   renderRequirements();
-  renderSidebar();
+  await renderSidebar();
 }
 
 // function handleAddCategory() { ... }
-// function handleExport() { ... }
-// function handleImport() { ... }
+async function handleExport() { 
+  console.log("export");
+ }
+async function handleImport() {
+  console.log("import");
+ }
 
-function initEventListeners(){
+async function initEventListeners(){
   // Project sidebar
   document.getElementById('btn-add-project').addEventListener('click', e => {
 
@@ -310,13 +316,45 @@ function initEventListeners(){
     document.getElementById('modal-overlay').classList.add('open');
     setTimeout(() => document.getElementById('modal-name').focus(), 50); // Timer to set when the keyboard shortcuts for modal kick in
   });
-  document.getElementById('project-list').addEventListener('click', e => {
+  document.getElementById('project-list').addEventListener('click', async e => {
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const { action, id } = el.dataset;
     if (action === 'select-project') {handleSelectProject(id);}
     if (action === 'delete-project') handleDeleteProject(id, e);
   });
+
+  // Main area
+
+  const mainArea = document.getElementById('main-area');
+  mainArea.addEventListener("keydown", e => {
+      if (e.target.id === "inp-text") {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddRequirement();
+      };
+  })
+
+  await mainArea.addEventListener("click", e => {
+    const deleteReq = e.target.closest('[del-req-id]');
+    if(deleteReq){
+      const id = deleteReq.getAttribute("del-req-id");
+      handleDeleteRequirement(id, e);
+    }
+    
+    const btn = e.target.closest('[data-filter]');
+    if(btn){
+      const filterType = btn.dataset.filter;
+      setFilter(filterType, btn);
+    }
+
+    const workspaceAction = e.target.closest('[workspace-action]');
+    if(workspaceAction){
+      const action = workspaceAction.getAttribute("workspace-action");
+      if (action === "add-requirement") handleAddRequirement();
+      if (action === "import") handleImport();
+      if (action === "export") handleExport();
+    }
+  })
+  
 
 
   // Import Modal overlay
@@ -355,6 +393,13 @@ function showToast(msg, type='') {
   t.className = 'show ' + type;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.className = ''; }, 3000);
+}
+
+function setFilter(f, btn) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderRequirements();
 }
 
 function esc(s) {

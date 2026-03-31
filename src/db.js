@@ -25,8 +25,8 @@ export const initDB =  async () => {
       if (!db.objectStoreNames.contains('requirements')) {
         const reqs = db.createObjectStore('requirements', { keyPath: 'id' });
         reqs.createIndex('by_project', 'projectId', { unique: false });
-        reqs.createIndex('by_category', 'categoryId', { unique: false });
-        console.log('Created object store: requirements');
+        reqs.createIndex('by_parent', 'parentCategoryId', { unique: false });
+        console.log('Created object store: categories');
       }
     }
   });
@@ -46,6 +46,20 @@ export const verifyDB = async () => {
   }
   console.log('--- End verification ---');
 
+}
+
+export async function migrateDB(){
+  const projects =  await getProjects();
+
+  for (const project of (projects || [])){
+    const reqs = await getRequirements();
+    for (const req of (reqs || [])) {
+      await saveRequirement({
+        ...req,
+        categoryId: null,
+      });
+    }
+  }
 }
 
 // Data access functions — all use the module-scoped db handle
