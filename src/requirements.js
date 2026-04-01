@@ -4,6 +4,14 @@ export const LEVELS = {
   der: { prefix: 'DER', label: 'Derived',    badge: 'badge-der' },
 };
 
+export function sortRequirements(reqs) {
+const LEVEL_ORDER = { sys: 0, sub: 1, der: 2 };
+  return [...reqs].sort((a, b) => {
+    const diff = LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level];
+    return diff !== 0 ? diff : a.id.localeCompare(b.id); // use localeCompare to ensure alphabetical / lexiographical ordering of reqs of the same level
+  });
+}
+
 // Generate the next sequential ID for a given level.
 // Mutates counters in place and returns the new ID string.
 export function generateId(counters, level) {
@@ -32,4 +40,25 @@ export function getDescendantReqIds(reqId, allReqs) {
   }
 
   return ids;
+}
+
+// Parse a level string from a requirement ID prefix.
+// e.g. 'SYS-001' -> 'sys'
+export function levelFromId(id) {
+  const prefix = id.split('-')[0];
+  const map = { SYS: 'sys', SUB: 'sub', DER: 'der' };
+  return map[prefix] || null;
+}
+
+// Rebuild counters object from an existing array of requirements.
+// Used after import to ensure new IDs continue from the right number.
+export function rebuildCounters(reqs) {
+  const counters = { sys: 0, sub: 0, der: 0 };
+  for (const req of reqs) {
+    const level = levelFromId(req.id);
+    if (!level) continue;
+    const num = parseInt(req.id.split('-')[1], 10);
+    if (num > counters[level]) counters[level] = num;
+  }
+  return counters;
 }

@@ -3,7 +3,9 @@ import { initDB, verifyDB, getProjects, saveProject, deleteProject,
          getCategories, saveCategory, deleteCategory, 
          migrateDB} from "./db.js"
 
-import { generateId, LEVELS, validateParent, getDescendantReqIds } from "./requirements.js";
+import { generateId, LEVELS, validateParent, getDescendantReqIds, sortRequirements } from "./requirements.js";
+
+import { buildMarkdown } from "./markdownHandler.js";
 
 import { confirmAddProject } from "./projects.js";
 
@@ -223,6 +225,7 @@ async function handleDeleteProject(id, e){
     projects    = await getProjects(); // Refresh the 
 }
 
+
 async function handleSelectProject(id) {
   activeProjectId  = id;
   activeCategoryId = null;
@@ -230,7 +233,7 @@ async function handleSelectProject(id) {
 
   projects    = await getProjects();
   currentProject   = projects.find(p => p.id === id) || null;
-  currentReqs      = currentProject ? await getRequirements(id) : [];
+  currentReqs      = currentProject ? sortRequirements(await getRequirements(id)) : [];
   currentCats      = currentProject ? await getCategories(id)   : [];
 
   renderSidebar();
@@ -275,6 +278,8 @@ async function handleAddRequirement() {
   await saveRequirement(req);
   currentReqs.push(req);
 
+  currentReqs = sortRequirements(currentReqs);
+
   document.getElementById('inp-text').value   = '';
   document.getElementById('inp-parent').value = '';
 
@@ -301,9 +306,28 @@ async function handleDeleteRequirement(id, e) {
 }
 
 // function handleAddCategory() { ... }
-async function handleExport() { 
-  console.log("export");
- }
+
+async function handleExport() {
+  if (!currentProject) return;
+
+  if (!('showDirectoryPicker' in window)) {
+    showToast('File System Access API not supported in this browser.', 'error');
+    return;
+  }
+
+  try {
+    const dirHandle  = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const fileHandle = await dirHandle.getFileHandle('REQUIREMENTS.md', { create: true });
+    const writable   = await fileHandle.createWritable();
+    await writable.write(buildMarkdown(currentProject, currentReqs, currentCats));
+    await writable.close();
+    showToast(`REQUIREMENTS.md written to "${dirHandle.name}"`, 'success');
+  } catch (err) {
+    console.error('Export failed: ' + err.message + err);
+    if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
+  }
+}
+
 async function handleImport() {
   console.log("import");
  }

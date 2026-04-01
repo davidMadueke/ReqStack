@@ -75,6 +75,19 @@ export async function deleteProject(id) {
   return db.delete('projects', id);
 }
 
+// Requirement is of the form
+/*
+  req = {
+    categoryId
+    id
+    level
+    parent
+    projectId
+    text
+  }
+
+*/ 
+
 export async function getRequirements(projectId) {
   return db.getAllFromIndex('requirements', 'by_project', projectId);
 }
