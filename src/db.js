@@ -63,6 +63,21 @@ export async function migrateDB(){
 }
 
 // Data access functions — all use the module-scoped db handle
+
+
+// Project is of the form
+/*
+  project = {
+    id
+    name: str
+    counter: Obj{
+      sys: number
+      der: number
+      sub: number
+    }
+  }
+
+*/ 
 export async function getProjects() {
   return db.getAll('projects');
 }
