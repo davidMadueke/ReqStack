@@ -45,13 +45,13 @@
     <div id="import-conflict" style="display:none;">
       <p style="color:var(--accent);font-size:12px;margin-top:4px;">This project already has requirements. Choose how to proceed:</p>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn" id="btn-import-replace-all" onclick="confirmImport('replace')">Replace all</button>
-        <button class="btn" id="btn-import-merge" onclick="confirmImport('merge')">Merge (skip duplicates)</button>
+        <button class="btn" id="btn-import-replace-all" data-action="replace">Replace all</button>
+        <button class="btn" id="btn-import-merge" data-action="merge">Merge (skip duplicates)</button>
       </div>
     </div>
     <div class="modal-btns">
-      <button class="btn" onclick="closeImportModal()">Cancel</button>
-      <button class="btn btn-accent" id="btn-import-confirm" onclick="confirmImport('replace')" style="display:none;">Import</button>
+      <button class="btn" data-action="cancel">Cancel</button>
+      <button class="btn btn-accent" id="btn-import-confirm" data-action="replace" style="display:none;">Import</button>
     </div>
   </div>
 </div>

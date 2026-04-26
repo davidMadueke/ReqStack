@@ -5,7 +5,7 @@ import { initDB, verifyDB, getProjects, saveProject, deleteProject,
 
 import { generateId, LEVELS, validateParent, getDescendantReqIds, sortRequirements } from "./requirements.js";
 
-import { buildMarkdown } from "./markdownHandler.js";
+import { buildMarkdown, parseMarkdown } from "./markdownHandler.js";
 
 import { confirmAddProject } from "./projects.js";
 
@@ -30,12 +30,11 @@ async function init() {
     try {
         await initDB();
         await migrateDB();
-        await verifyDB();
+        //await verifyDB();
         projects = await getProjects();
         for (const project in projects){
           let i = project.id;
           let req = await getRequirements(i);
-          console.log(req);
         }
         await initEventListeners();
         await renderSidebar();
@@ -159,7 +158,7 @@ async function renderRequirements() {
   }
 
   const indentMap = { sys: 0, sub: 1, der: 2 };
- 
+  
   list.innerHTML = visible.map(r => {
     const lm = LEVELS[r.level];
     const indent = indentMap[r.level];
@@ -234,6 +233,7 @@ async function handleSelectProject(id) {
   projects    = await getProjects();
   currentProject   = projects.find(p => p.id === id) || null;
   currentReqs      = currentProject ? sortRequirements(await getRequirements(id)) : [];
+  
   currentCats      = currentProject ? await getCategories(id)   : [];
 
   renderSidebar();
@@ -299,6 +299,8 @@ async function handleDeleteRequirement(id, e) {
 
   currentReqs = currentReqs.filter(r => !toDelete.includes(r.id));  
   for (const rid of toDelete) await deleteRequirement(rid);
+  
+  currentReqs = sortRequirements(currentReqs);
 
   renderCategoryPanel();
   renderRequirements();
@@ -323,14 +325,121 @@ async function handleExport() {
     await writable.close();
     showToast(`REQUIREMENTS.md written to "${dirHandle.name}"`, 'success');
   } catch (err) {
-    console.error('Export failed: ' + err.message + err);
     if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
   }
 }
 
+let pendingImport = null;
+
 async function handleImport() {
-  console.log("import");
+  if (!currentProject) return;
+  
+  let text;
+  try {
+    const [fileHandle] = await window.showOpenFilePicker({
+      excludeAcceptAllOption: true,
+      multiple: false,
+      types: [{
+        description: "Markdown Files",
+        accept: {
+          "text/markdown": [".md"]
+        }}
+      ]});
+
+    const file = await fileHandle.getFile();
+    text = await file.text();
+
+  } catch (err) {
+    if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
+  };
+
+  const parsed = parseMarkdown(text, currentProject.id);
+
+  pendingImport = parsed;
+
+  if (parsed.reqs.length === 0) {
+    showToast('No valid Requirements found in imported markdown file ', 'error');
+    return;
+  }
+
+  // Populate import Markdown preview modal
+  const classMap = { sys: 'prev-sys', sub: 'prev-sub', der: 'prev-der' }; // Taken from CSS .import-preview class names
+  document.getElementById("import-desc").textContent = 
+    `Found ${parsed.reqs.length} requirement(s):`;
+
+  document.getElementById("import-preview").innerHTML =
+    parsed.reqs.map(r =>
+      `<span class="${classMap[r.level]}"> ${esc(r.id)} - ${esc(r.text.slice(0,80))}${r.text.length > 80 ? '…' : ''} </span>` // Truncate preview to 80 characters
+    ).join("");
+  
+  const conflict = document.getElementById('import-conflict');
+  const btnConfirm = document.getElementById('btn-import-confirm');
+  
+  if (currentReqs.length > 0) {
+    conflict.style.display  = 'block';
+    btnConfirm.style.display = 'none';
+  } else {
+    conflict.style.display  = 'none';
+    btnConfirm.style.display = 'inline-block';
+  }
+
+
+  openModal('import-modal-overlay');
  }
+
+async function confirmImport(mode){
+  if (!currentProject || !pendingImport) return;
+
+  if (mode === "replace") {
+    for (const r of currentReqs) await deleteRequirement(r.id);
+    for (const r of pendingImport.reqs) await saveRequirement(r);
+    
+    for (const c of currentCats) await deleteCategory(c.id);
+    for (const c of pendingImport.categories || []) await saveCategory(c.id);
+    currentProject.counters = pendingImport.counters;
+    await saveProject(currentProject);
+    currentReqs = pendingImport.reqs
+    showToast(`Imported ${currentReqs.length} requirements.`, 'success');
+  } else if (mode === "merge") {
+    // merge categories 
+    const existingCatIds = new Set(currentCats.map(c => c.id));
+    const newCats = (pendingImport.categories || []).filter(c => !existingCatIds.has(c.id));
+    for (const cat of newCats){
+      await saveCategory(cat);
+      currentCats.push(cat)
+    }
+
+    // update category names for currently existing categories if they are differently named in imported Markdown file
+    for (const importedCat of pendingImport.categories || []){
+      const existing = currentCats.find(c => c.id === importedCat.id)
+      if (existing && existing.name !== importedCat.name){
+        existing.name = importedCat.name;
+        await saveCategory(existing) // uses db.put in backend, thus performs  an update not a new category
+      }
+    }
+  
+
+      const existingIds = new Set(currentReqs.map(r => r.id));
+    const newReqs = pendingImport.reqs.filter(r => !existingIds.has(r.id));
+    for (const r of newReqs) await saveRequirement(r);
+    currentReqs.push(...newReqs);
+
+    // --- merge counters as now ---
+    for (const lvl of ['sys','sub','der']) {
+      if (pendingImport.counters[lvl] > currentProject.counters[lvl]) {
+        currentProject.counters[lvl] = pendingImport.counters[lvl];
+      }
+    }
+    await saveProject(currentProject);
+    showToast(`Merged ${newCats.length} categories and ${newReqs.length} new requirement(s).`, 'success');
+  }
+
+  pendingImport = null;
+  closeModal('import-modal-overlay');
+  renderCategoryPanel();
+  renderRequirements();
+  await renderSidebar();
+}
 
 async function initEventListeners(){
   // Project sidebar
@@ -341,6 +450,7 @@ async function initEventListeners(){
     setTimeout(() => document.getElementById('modal-name').focus(), 50); // Timer to set when the keyboard shortcuts for modal kick in
   });
   document.getElementById('project-list').addEventListener('click', async e => {
+    
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const { action, id } = el.dataset;
@@ -382,7 +492,7 @@ async function initEventListeners(){
 
 
   // Import Modal overlay
-  document.getElementById('btn-add-project-cancel').addEventListener('click', e => {closeModal();});
+  document.getElementById('btn-add-project-cancel').addEventListener('click', e => {closeModal('btn-add-project-cancel');});
   document.getElementById('btn-add-project-confirm').addEventListener('click', e => {handleAddProject();});
   
   // Add Project Modal Overlay
@@ -393,9 +503,18 @@ async function initEventListeners(){
     if (e.target === e.currentTarget) closeModal('modal-overlay');
   });
 
-  document.getElementById('import-modal-overlay').addEventListener('click', e => {
+  const importMarkdownOverlay = document.getElementById('import-modal-overlay')
+  importMarkdownOverlay.addEventListener('click', e => {
     if (e.target === e.currentTarget) closeModal('import-modal-overlay');
+
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    const action = el.dataset.action;
+    if (action === "cancel") closeModal("import-modal-overlay"); 
+    else { confirmImport(action);}
   });
+
+  // Import Markdown Overlays
 
   // Keyboard shortcuts
   document.addEventListener('keydown', e => {
@@ -430,9 +549,17 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function closeModal() {
-  document.getElementById('modal-overlay').classList.remove('open');
+
+// ── MODAL HELPERS ──
+
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
 }
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
 
 
 document.addEventListener('DOMContentLoaded', init);

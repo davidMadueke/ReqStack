@@ -1,3 +1,4 @@
+
 import { LEVELS, levelFromId, rebuildCounters } from './requirements.js';
 
 
@@ -66,4 +67,75 @@ export function buildMarkdown(project, reqs, categories) {
 
   return md;
 
+}
+
+export function parseMarkdown(text, projectId) {
+  const lines    = text.split('\n');
+  const reqs     = [];
+  const categories = [];
+
+  const headingRe  = /^#{3,6}\s+`((?:SYS|SUB|DER)-\d+)`/;
+  const parentRe   = /^\*Parent:\s+`([^`]+)`\*\s*$/;
+  const catIdRe    = /^<!-- reqstack:categoryId="([^"]+)" -->$/;
+  const catTagRe   = /^<!-- reqstack:category id="([^"]+)" -->$/;
+
+  let current    = null;
+  let textLines  = [];
+  let currentCatId = null;
+
+  function flush(){
+    if(!current) return;
+    const text  = textLines.join("\n").trim();
+    if(text) {
+      current.text = text;
+      reqs.push(current);
+    }
+
+    current = null;
+    textLines = [];
+  }
+
+  for (const line of lines) {
+    // Category tag — tracks which category subsequent reqs belong to
+    const catMatch = line.match(catTagRe);
+    if (catMatch) {
+      currentCatId = catMatch[1];
+      continue;
+    }
+
+    // Requirement heading
+    const hm = line.match(headingRe);
+    if (hm) {
+      flush();
+      const id    = hm[1];
+      const level = levelFromId(id);
+      if (level) {
+        current = { id, level, parent: null, categoryId: currentCatId || null, projectId };
+      }
+      continue;
+    }
+
+    if (current) {
+      // Parent link
+      const pm = line.match(parentRe);
+      if (pm) { current.parent = pm[1]; continue; }
+
+      // Inline categoryId tag
+      const cm = line.match(catIdRe);
+      if (cm) { current.categoryId = cm[1]; continue; }
+
+      // Skip structural lines
+      if (line.startsWith('|') || line.startsWith('---') ||
+          line.startsWith('>') || line.match(/^#{1,2}\s/)) continue;
+
+      textLines.push(line);
+    }
+  }
+
+  flush();
+
+  const counters = rebuildCounters(reqs);
+
+
+  return {reqs, counters, categories};
 }
