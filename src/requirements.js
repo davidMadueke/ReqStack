@@ -5,11 +5,42 @@ export const LEVELS = {
 };
 
 export function sortRequirements(reqs) {
-const LEVEL_ORDER = { sys: 0, sub: 1, der: 2 };
-  return [...reqs].sort((a, b) => {
+  const LEVEL_ORDER = { sys: 0, sub: 1, der: 2 };
+  const compare = (a, b) => {
     const diff = LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level];
     return diff !== 0 ? diff : a.id.localeCompare(b.id); // use localeCompare to ensure alphabetical / lexiographical ordering of reqs of the same level
-  });
+  };
+  
+  // Create a new Map for byId, create a new array of nodes
+  const nodes = reqs.map(r => ({...r, children: []}));
+  const byId = new Map(nodes.map(r => [r.id, r]));
+
+  // Create a new array called roots and if the node is a child add it to root.children
+  const roots = [];
+  for (const node of nodes){
+    if(node.parent && byId.has(node.parent)){ // Handles the case where there are orphaned children (nodes that have a parent but that parent is not in reqs)
+      byId.get(node.parent).children.push(node);
+    } else {
+      roots.push(node);
+    } 
+  }
+
+  // Create a recursive function, walk, that iteratively sorts each root and its children
+  const output = [];
+  const walk = (list) => {
+    list.sort(compare);
+    for (const node of list) {
+      const original = reqs.find(r => r.id === node.id);
+      output.push(original);
+
+      if( node.children.length > 0){
+        walk(node.children)
+      }
+    }
+  }
+
+  walk(roots);
+  return output;
 }
 
 // Generate the next sequential ID for a given level.
